@@ -8,7 +8,16 @@ A personal calorie tracker for iPhone, built as an installable web app (PWA). No
 - **Food sources:** ~200 built-in USDA foods (instant, offline), USDA FoodData Central online search (generic + branded/packaged), Open Food Facts.
 - **Packaged food:** scan the barcode with the camera, or enter the Nutrition Facts label (per serving or per 100 g). Saved to *My Foods*.
 - **AI meal photo scan:** take a picture and Claude identifies each food, estimates grams and calories for the whole meal. Edit the grams before adding.
-- Quick add, edit/delete entries, export/import backups, dark mode, works offline.
+- **History & trends** (7 days / 30 / 90 / 1 year / all time): average calories per day vs goal and vs the previous period, days logged, days at or under goal, logging streaks, average protein and how often you hit it, highest/lowest day, a daily (or weekly/monthly) calories chart with a 7-day average, macro split, calories by meal and by weekday, top calorie sources, and a day-by-day table.
+- **Body weight:** log weigh-ins (lb or kg), see a 7-day trend line, change and rate per week, and an **estimated maintenance calories** figure computed from your logged intake and weight trend (after ~2 weeks of data).
+- Smoothie builder, quick add, edit/delete entries, export/import backups, light & dark mode, works offline.
+
+## Where your data lives
+Everything stays **on your iPhone**, inside the Home Screen app's own website storage. Nothing is sent to a server, GitHub, or iCloud.
+- The food log is in **IndexedDB** (one record per day). Safari lets a site use a large share of free disk space for it, so years of history fit easily (~1–3 KB per day of logging).
+- Settings, My Foods, recent foods and weigh-ins are in `localStorage` (small).
+- **Settings → Storage & backups** shows how much is used, the growth per day, and how many years of room are left at your pace.
+- Deleting the Home Screen icon deletes its data, and data in a Safari tab is separate from the Home Screen app. Use **Export backup** now and then (save it to Files / iCloud Drive) and **Import backup** to restore or move data.
 
 ## Install on iPhone
 1. Open the app URL in **Safari**.

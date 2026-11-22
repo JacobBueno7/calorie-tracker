@@ -2,38 +2,10 @@ import { FOOD_DB } from "./foods.js";
 import { analyzeMeal, imageToBase64, looksLikeAnthropicKey, MODELS } from "./ai.js";
 import { searchUSDA, searchBranded, searchOFF, lookupBarcode, startBarcodeScan, decodeBarcodeFromFile } from "./online.js";
 import * as S from "./store.js";
+import { MEALS, mealLabel, $, $$, esc, fmt, r1, num, scale, sum, parseKey, startOfDay, addDays, formatBytes } from "./util.js";
+import { renderTrends, bindTrends, kgToUnit, unitToKg } from "./trends.js";
 
 const { state } = S;
-
-const MEALS = [
-  { id: "breakfast", label: "Breakfast", icon: "🍳" },
-  { id: "lunch", label: "Lunch", icon: "🥪" },
-  { id: "dinner", label: "Dinner", icon: "🍽️" },
-  { id: "snacks", label: "Snacks", icon: "🍎" },
-];
-const mealLabel = (id) => MEALS.find((m) => m.id === id)?.label || "Snacks";
-
-// ---------- helpers ----------
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const esc = (s) =>
-  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const fmt = (n) => Math.round(Number(n) || 0).toLocaleString();
-const r1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
-const num = (v) => {
-  const n = parseFloat(String(v ?? "").replace(",", "."));
-  return Number.isFinite(n) ? n : 0;
-};
-const scale = (per, grams) => ({
-  kcal: (per.kcal * grams) / 100,
-  p: (per.p * grams) / 100,
-  c: (per.c * grams) / 100,
-  f: (per.f * grams) / 100,
-});
-const sum = (list) =>
-  list.reduce((t, e) => ({ kcal: t.kcal + (e.kcal || 0), p: t.p + (e.p || 0), c: t.c + (e.c || 0), f: t.f + (e.f || 0) }), {
-    kcal: 0, p: 0, c: 0, f: 0,
-  });
 
 function defaultMeal() {
   const h = new Date().getHours();
@@ -118,13 +90,31 @@ function bindMealPicker(root, onChange) {
   );
 }
 
+// ---------- icons (inline SVG, stroke = currentColor) ----------
+const ICONS = {
+  chevL: '<path d="M15 18l-6-6 6-6"/>',
+  chevR: '<path d="M9 18l6-6-6-6"/>',
+  camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  scale: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8.5 9.5a5 5 0 0 1 7 0L12 13z"/>',
+};
+const icon = (name, cls = "") => `<svg class="ico ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+
 // ---------- main render ----------
+let booted = false;
 function render() {
+  if (!booted) return;
   $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   const v = $("#view");
   if (view === "diary") v.innerHTML = renderDiary();
-  else if (view === "history") v.innerHTML = renderHistory();
-  else if (view === "foods") v.innerHTML = renderMyFoods();
+  else if (view === "history") {
+    v.innerHTML = renderTrends();
+    bindTrends(v, (range) => {
+      state.settings.histRange = range;
+      S.persist.settings();
+      render();
+    });
+  } else if (view === "foods") v.innerHTML = renderMyFoods();
   else if (view === "settings") {
     v.innerHTML = renderSettings();
     bindSettings(v);
@@ -142,11 +132,12 @@ function dayTitle(d) {
 }
 
 function ring(eaten, goal) {
-  const r = 54;
+  const r = 52;
   const c = 2 * Math.PI * r;
   const pct = goal > 0 ? Math.min(eaten / goal, 1) : 0;
   const over = eaten > goal;
   return `<svg viewBox="0 0 130 130" class="ring">
+    <defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" class="rg-a"/><stop offset="1" class="rg-b"/></linearGradient></defs>
     <circle cx="65" cy="65" r="${r}" class="ring-bg"/>
     <circle cx="65" cy="65" r="${r}" class="ring-fg ${over ? "over" : ""}" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - pct)}" transform="rotate(-90 65 65)"/>
   </svg>`;
@@ -154,12 +145,32 @@ function ring(eaten, goal) {
 
 function macroBar(label, val, goal, cls) {
   const pct = goal > 0 ? Math.min((val / goal) * 100, 100) : 0;
-  return `<div class="macro"><div class="macro-top"><span>${label}</span><span>${fmt(val)}${goal ? ` / ${fmt(goal)}` : ""} g</span></div>
+  return `<div class="macro"><div class="macro-top"><i class="key bar-key ${cls}"></i>${label}</div>
+    <div class="macro-val"><b>${fmt(val)}</b><small>${goal ? ` / ${fmt(goal)}` : ""} g</small></div>
     <div class="bar"><div class="${cls}" style="width:${pct}%"></div></div></div>`;
 }
 
 function macroLine(t) {
   return `<span class="mp">P ${fmt(t.p)}g</span><span class="mc">C ${fmt(t.c)}g</span><span class="mf">F ${fmt(t.f)}g</span>`;
+}
+
+// Mon–Sun strip around the selected day; each day shows how close it got to the goal.
+function weekStrip() {
+  const goal = state.settings.goal;
+  const cur = startOfDay(current);
+  const monday = addDays(cur, -((cur.getDay() + 6) % 7));
+  const todayK = S.dayKey(new Date());
+  return `<div class="week">${[0, 1, 2, 3, 4, 5, 6].map((i) => {
+    const d = addDays(monday, i);
+    const k = S.dayKey(d);
+    const kcal = sum(S.entriesFor(k)).kcal;
+    const pct = goal > 0 ? Math.min(kcal / goal, 1) : 0;
+    return `<button class="wd${k === curKey() ? " on" : ""}${k === todayK ? " today" : ""}" data-act="goto-day" data-key="${k}" ${k > todayK ? "disabled" : ""}
+      aria-label="${esc(d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }))}: ${fmt(kcal)} kcal">
+      <span class="wd-l">${esc(d.toLocaleDateString(undefined, { weekday: "narrow" }))}</span>
+      <span class="wd-n">${d.getDate()}</span>
+      <span class="wd-ring${kcal > goal ? " over" : ""}" style="--pct:${pct.toFixed(3)}"></span></button>`;
+  }).join("")}</div>`;
 }
 
 function renderDiary() {
@@ -168,87 +179,65 @@ function renderDiary() {
   const goal = state.settings.goal;
   const left = goal - t.kcal;
   const isToday = curKey() === S.dayKey(new Date());
+  const kg = state.weights[curKey()];
+  const wu = state.settings.weightUnit === "kg" ? "kg" : "lb";
   return `
-  <header class="topbar">
-    <button class="icon-btn" data-act="prev-day" aria-label="Previous day">‹</button>
-    <button class="date-title" data-act="today"><span>${dayTitle(current)}</span>
-      <small>${current.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</small></button>
-    <button class="icon-btn" data-act="next-day" aria-label="Next day" ${isToday ? "disabled" : ""}>›</button>
-  </header>
-  <section class="card summary">
-    <div class="ring-wrap">${ring(t.kcal, goal)}
-      <div class="ring-center"><b class="${left < 0 ? "neg" : ""}">${fmt(Math.abs(left))}</b><span>${left < 0 ? "over" : "left"}</span></div>
+  <header class="topbar diary-top">
+    <button class="date-title" data-act="today" aria-label="Go to today">
+      <span class="eyebrow">${esc(current.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }))}</span>
+      <h1>${dayTitle(current)}</h1></button>
+    <div class="nav-btns">
+      <button class="icon-btn" data-act="prev-day" aria-label="Previous day">${icon("chevL")}</button>
+      <button class="icon-btn" data-act="next-day" aria-label="Next day" ${isToday ? "disabled" : ""}>${icon("chevR")}</button>
     </div>
-    <div class="sum-side">
-      <div class="sum-row"><span>Goal</span><b>${fmt(goal)}</b></div>
-      <div class="sum-row"><span>Eaten</span><b>${fmt(t.kcal)}</b></div>
+  </header>
+  ${weekStrip()}
+  <section class="card summary">
+    <div class="sum-top">
+      <div class="ring-wrap">${ring(t.kcal, goal)}
+        <div class="ring-center"><b class="${left < 0 ? "neg" : ""}">${fmt(Math.abs(left))}</b><span>${left < 0 ? "kcal over" : "kcal left"}</span></div>
+      </div>
+      <div class="sum-side">
+        <div class="sum-stat"><span>Goal</span><b>${fmt(goal)}</b></div>
+        <div class="sum-stat"><span>Eaten</span><b>${fmt(t.kcal)}</b></div>
+        <button class="sum-stat weight-stat" data-act="log-weight" data-key="${curKey()}"><span>${icon("scale")}Weight</span>
+          <b>${kg ? `${r1(kgToUnit(kg)).toFixed(1)}<small> ${wu}</small>` : `<em>＋ Log</em>`}</b></button>
+      </div>
+    </div>
+    <div class="macros3">
       ${macroBar("Protein", t.p, state.settings.protein, "p")}
       ${macroBar("Carbs", t.c, state.settings.carbs, "c")}
       ${macroBar("Fat", t.f, state.settings.fat, "f")}
     </div>
   </section>
-  <button class="scan-cta" data-act="photo"><span class="cam">📷</span><span><b>Snap a meal</b><small>AI estimates the calories in the whole plate</small></span></button>
+  <button class="scan-cta" data-act="photo"><span class="cta-icon">${icon("camera")}</span>
+    <span class="cta-text"><b>Snap a meal</b><small>AI estimates the calories in the whole plate</small></span>${icon("chevR", "cta-chev")}</button>
   ${MEALS.map((m) => {
     const items = list.filter((e) => e.meal === m.id);
     const mt = sum(items);
     return `<section class="card meal">
-      <div class="meal-head"><span>${m.icon} ${m.label}</span><span class="kcal">${fmt(mt.kcal)} kcal</span></div>
-      ${items.length ? `<div class="meal-macros">${macroLine(mt)}</div>` : ""}
+      <div class="meal-head"><span class="meal-icon ${m.id}">${m.icon}</span>
+        <div class="meal-title"><b>${m.label}</b>${items.length ? `<div class="meal-macros">${macroLine(mt)}</div>` : `<small class="muted">Nothing logged yet</small>`}</div>
+        <span class="kcal">${fmt(mt.kcal)}<small>kcal</small></span></div>
       ${items.length ? `<ul class="entries">${items.map((e) => `
         <li data-act="edit-entry" data-id="${esc(e.id)}">
           <div class="e-main"><span class="e-name">${e.kind === "smoothie" ? "🥤 " : ""}${esc(e.name)}</span>
           <span class="e-sub">${e.grams ? `${fmt(e.grams)} g` : "Quick add"}${e.brand ? ` · ${esc(e.brand)}` : ""}${e.source === "ai" ? " · AI" : ""}</span>
           <span class="e-macros">${macroLine(e)}</span></div>
           <span class="e-kcal">${fmt(e.kcal)}<small>kcal</small></span></li>`).join("")}</ul>` : ""}
-      <button class="add-btn" data-act="add" data-meal="${m.id}">＋ Add food</button>
+      <button class="add-btn" data-act="add" data-meal="${m.id}">${icon("plus")}Add food</button>
     </section>`;
   }).join("")}
-  <p class="foot">Values per gram from USDA FoodData Central, Open Food Facts & your labels.</p>`;
-}
-
-function renderHistory() {
-  const days = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const k = S.dayKey(d);
-    days.push({ d, k, t: sum(S.entriesFor(k)) });
-  }
-  const goal = state.settings.goal;
-  const max = Math.max(goal * 1.2, ...days.map((x) => x.t.kcal), 1);
-  const logged = days.filter((x) => x.t.kcal > 0);
-  const avg = logged.length ? logged.reduce((a, x) => a + x.t.kcal, 0) / logged.length : 0;
-  const avgP = logged.length ? logged.reduce((a, x) => a + x.t.p, 0) / logged.length : 0;
-  return `
-  <header class="topbar"><h1>History</h1></header>
-  <section class="card">
-    <div class="stats">
-      <div><b>${fmt(avg)}</b><span>avg kcal / day</span></div>
-      <div><b>${fmt(avgP)} g</b><span>avg protein</span></div>
-      <div><b>${logged.length}</b><span>days logged</span></div>
-    </div>
-    <div class="chart">
-      <div class="goal-line" style="bottom:${(goal / max) * 100}%"><span>${fmt(goal)}</span></div>
-      ${days.map((x) => `<button class="col" data-act="goto-day" data-key="${x.k}" aria-label="${x.k}: ${fmt(x.t.kcal)} kcal">
-        <div class="bar-v ${x.t.kcal > goal ? "over" : ""}" style="height:${(x.t.kcal / max) * 100}%"></div>
-        <span>${x.d.toLocaleDateString(undefined, { weekday: "narrow" })}</span></button>`).join("")}
-    </div>
-  </section>
-  <section class="card list">
-    ${days.slice().reverse().map((x) => `<button class="hist-row" data-act="goto-day" data-key="${x.k}">
-      <span>${x.d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
-      <span class="muted">P ${fmt(x.t.p)} · C ${fmt(x.t.c)} · F ${fmt(x.t.f)}</span>
-      <b>${x.t.kcal ? fmt(x.t.kcal) : "—"}</b></button>`).join("")}
-  </section>`;
+  <p class="foot">Nutrition per gram from USDA FoodData Central, Open Food Facts and your labels.</p>`;
 }
 
 function renderMyFoods() {
   return `
-  <header class="topbar"><h1>My Foods</h1></header>
-  <div class="row gap pad">
-    <button class="btn" data-act="new-smoothie">🥤 New smoothie</button>
-    <button class="btn ghost" data-act="new-custom">＋ Food from label</button>
-    <button class="btn ghost" data-act="scan-to-foods">▦ Scan barcode</button>
+  <header class="topbar"><div><p class="eyebrow">${state.foods.length} saved</p><h1>My Foods</h1></div></header>
+  <div class="action-grid">
+    <button class="action" data-act="new-smoothie"><span class="action-icon">🥤</span><b>New smoothie</b><small>Build from ingredients</small></button>
+    <button class="action" data-act="new-custom"><span class="action-icon">🏷️</span><b>From label</b><small>Enter Nutrition Facts</small></button>
+    <button class="action" data-act="scan-to-foods"><span class="action-icon">▦</span><b>Scan barcode</b><small>Packaged foods</small></button>
   </div>
   <section class="card list">
     ${state.foods.length ? state.foods.map((f) => `<button class="food-row" data-act="edit-food" data-id="${esc(f.id)}">
@@ -261,7 +250,7 @@ function renderMyFoods() {
 function renderSettings() {
   const s = state.settings;
   return `
-  <header class="topbar"><h1>Settings</h1></header>
+  <header class="topbar"><div><p class="eyebrow">Calorie Tracker</p><h1>Settings</h1></div></header>
   <section class="card form">
     <h3>Daily goals</h3>
     <label>Calories<input data-set="goal" inputmode="numeric" value="${esc(s.goal)}"></label>
@@ -270,6 +259,8 @@ function renderSettings() {
       <label>Carbs g<input data-set="carbs" inputmode="numeric" value="${esc(s.carbs)}"></label>
       <label>Fat g<input data-set="fat" inputmode="numeric" value="${esc(s.fat)}"></label>
     </div>
+    <label>Body weight unit</label>
+    <div class="seg" data-unit-picker>${["lb", "kg"].map((u) => `<button type="button" data-unit="${u}" class="${(s.weightUnit || "lb") === u ? "on" : ""}">${u === "lb" ? "Pounds (lb)" : "Kilograms (kg)"}</button>`).join("")}</div>
   </section>
   <section class="card form">
     <h3>AI photo scanning</h3>
@@ -289,13 +280,55 @@ function renderSettings() {
     <label>USDA API key (optional)<input data-set="usdaKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="DEMO_KEY" value="${esc(s.usdaKey)}"></label>
   </section>
   <section class="card form">
-    <h3>Your data</h3>
-    <p class="hint">Everything is stored on this device. Make a backup now and then.</p>
+    <h3>Storage & backups</h3>
+    <div class="storage" data-storage><div class="loading"><div class="spinner"></div>Checking storage…</div></div>
     <div class="row gap"><button class="btn ghost" data-act="export">Export backup</button>
     <label class="btn ghost file-btn">Import backup<input type="file" accept="application/json,.json" data-act-file="import" hidden></label></div>
     <button class="btn danger outline" data-act="wipe">Erase all data</button>
   </section>
   <p class="foot">Calorie Tracker · runs entirely on your phone</p>`;
+}
+
+function ago(ts) {
+  if (!ts) return "never";
+  const days = Math.floor((Date.now() - ts) / 86400000);
+  return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+async function fillStorage(box) {
+  const info = await S.storageInfo();
+  const data = info.diaryBytes + info.localBytes;
+  // Growth rate: diary size spread over the days since the first entry (at least a week).
+  const spanDays = info.firstDay ? Math.max(7, Math.round((Date.now() - parseKey(info.firstDay)) / 86400000) + 1) : 0;
+  const perDay = spanDays ? info.diaryBytes / spanDays : 0;
+  let room;
+  let pct;
+  let limitText;
+  if (info.backend === "idb" && info.quota) {
+    const free = Math.max(0, info.quota - (info.usage || 0));
+    pct = ((info.usage || 0) / info.quota) * 100;
+    limitText = `${formatBytes(info.usage)} used of ${formatBytes(info.quota)} this app may use`;
+    room = perDay ? free / perDay / 365 : null;
+  } else {
+    const limit = info.backend === "idb" ? null : S.LOCAL_STORAGE_LIMIT;
+    pct = limit ? (data / limit) * 100 : null;
+    limitText = limit ? `${formatBytes(data)} used of about ${formatBytes(limit)}` : `${formatBytes(data)} used`;
+    room = limit && perDay ? Math.max(0, limit - data) / perDay / 365 : null;
+  }
+  const years = room == null ? "" : room > 100 ? "more than 100 years" : room >= 1 ? `about ${Math.floor(room)} year${Math.floor(room) === 1 ? "" : "s"}` : `about ${Math.max(1, Math.round(room * 12))} months`;
+  const stale = Date.now() - (state.settings.lastBackup || 0) > 30 * 86400000 && info.daysLogged > 0;
+  box.innerHTML = `
+    <div class="storage-meter"><div style="width:${Math.min(100, Math.max(pct || 0, 0.5)).toFixed(1)}%"></div></div>
+    <p class="storage-line"><b>${esc(limitText)}</b></p>
+    <ul class="storage-facts">
+      <li><span>Your log</span><b>${formatBytes(info.diaryBytes)} · ${info.daysLogged} day${info.daysLogged === 1 ? "" : "s"}</b></li>
+      ${perDay ? `<li><span>Growth</span><b>~${formatBytes(Math.round(perDay))} per day</b></li>` : ""}
+      ${years ? `<li><span>Room left at this pace</span><b>${years}</b></li>` : ""}
+      <li><span>Kept in</span><b>${info.backend === "idb" ? "IndexedDB on this phone" : "Local storage on this phone"}</b></li>
+      ${info.persisted != null ? `<li><span>Protected from cleanup</span><b>${info.persisted ? "Yes" : "Not yet"}</b></li>` : ""}
+      <li><span>Last backup</span><b class="${stale ? "over-text" : ""}">${ago(state.settings.lastBackup)}</b></li>
+    </ul>
+    <p class="hint">Your data never leaves this phone, isn't synced to iCloud, and isn't on GitHub. Deleting the Home Screen icon deletes the data with it, so export a backup now and then (to Files or iCloud Drive).</p>`;
 }
 
 function bindSettings(root) {
@@ -307,15 +340,62 @@ function bindSettings(root) {
       toast("Saved");
     })
   );
+  $$("[data-unit]", root).forEach((b) =>
+    b.addEventListener("click", () => {
+      state.settings.weightUnit = b.dataset.unit;
+      S.persist.settings();
+      $$("[data-unit]", root).forEach((x) => x.classList.toggle("on", x === b));
+      toast("Saved");
+    })
+  );
   $("[data-act-file=import]", root).addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     try {
-      S.importData(await file.text());
+      await S.importData(await file.text());
       toast("Backup imported");
       render();
     } catch (err) {
       toast(err.message);
+    }
+  });
+  fillStorage($("[data-storage]", root)).catch(() => ($("[data-storage]", root).innerHTML = ""));
+}
+
+// ---------- body weight ----------
+function openWeight(key = S.dayKey(new Date())) {
+  const u = state.settings.weightUnit === "kg" ? "kg" : "lb";
+  const existing = state.weights[key];
+  // Pre-fill with the most recent weigh-in so a small change is quick to enter.
+  const lastKey = Object.keys(state.weights).filter((k) => k <= key).sort().at(-1);
+  const start = existing || (lastKey ? state.weights[lastKey] : 0);
+  const el = openSheet(
+    `<div class="sheet-head"><button class="link" data-close>Cancel</button><h2>Weight</h2><span></span></div>
+    <div class="pad form weight-form">
+      <label>Date<input type="date" class="w-date" value="${esc(key)}" max="${S.dayKey(new Date())}"></label>
+      <div class="grams-box"><input class="grams w-val" inputmode="decimal" placeholder="0.0" value="${start ? r1(kgToUnit(start)).toFixed(1) : ""}"><span>${u}</span></div>
+      <p class="hint center">Weigh in at the same time of day (e.g. mornings) for the cleanest trend.</p>
+      <button class="btn big" data-a="save">Save weight</button>
+      ${existing ? `<button class="btn danger outline" data-a="delete">Delete this weigh-in</button>` : ""}
+    </div>`,
+    { small: true }
+  );
+  const valInput = $(".w-val", el);
+  setTimeout(() => valInput.focus(), 300);
+  el.addEventListener("click", (ev) => {
+    const a = ev.target.closest("[data-a]")?.dataset.a;
+    const day = $(".w-date", el).value || key;
+    if (a === "save") {
+      const v = num(valInput.value);
+      if (!(v > 0 && v < 1500)) return toast(`Enter your weight in ${u}`);
+      S.setWeight(day, unitToKg(v));
+      toast(`Saved ${r1(v).toFixed(1)} ${u}`);
+      closeSheet(el);
+      render();
+    } else if (a === "delete") {
+      S.setWeight(key, 0);
+      closeSheet(el);
+      render();
     }
   });
 }
@@ -345,6 +425,7 @@ document.addEventListener("click", async (ev) => {
     else if (food) openCustomFood({ edit: food, onSaved: () => render() });
   }
   else if (act === "scan-to-foods") openBarcode({ meal: defaultMeal(), saveOnly: true });
+  else if (act === "log-weight") openWeight(t.dataset.key || S.dayKey(new Date()));
   else if (act === "save-key") {
     const inp = $(".key-input");
     const key = inp.value.replace(/\s+/g, "");
@@ -373,8 +454,8 @@ document.addEventListener("click", async (ev) => {
   }
   else if (act === "export") exportBackup();
   else if (act === "wipe") {
-    if (await confirmDialog("Erase ALL entries, foods, settings and your API key on this device? This cannot be undone.", "Erase everything")) {
-      S.eraseAll();
+    if (await confirmDialog("Erase ALL entries, weigh-ins, foods, settings and your API key on this device? This cannot be undone.", "Erase everything")) {
+      await S.eraseAll();
       location.reload();
     }
   }
@@ -392,10 +473,14 @@ async function exportBackup() {
   const json = S.exportData();
   const name = `calories-backup-${S.dayKey(new Date())}.json`;
   const file = new File([json], name, { type: "application/json" });
+  const done = () => {
+    S.markBackedUp();
+    if (view === "settings") render();
+  };
   if (navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: "Calorie Tracker backup" });
-      return;
+      return done();
     } catch (e) {
       if (e.name === "AbortError") return;
     }
@@ -405,6 +490,7 @@ async function exportBackup() {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  done();
 }
 
 // ---------- Add food (search) ----------
@@ -606,7 +692,7 @@ function openAmount(orig, { meal, entry, onDone, pick, initialGrams } = {}) {
         <label class="check"><input type="checkbox" data-adj-save ${powder ? "checked" : ""}> Remember these values in My Foods</label>
       </details>`}
       ${pick ? "" : mealPicker(selMeal)}
-      <button class="btn primary big" data-a="save">${pick ? "Add to smoothie" : entry ? "Save changes" : "Add to diary"}</button>
+      <button class="btn primary big" data-a="save">${pick ? "Add to smoothie" : entry ? "Save changes" : "Add to log"}</button>
       ${canSave && !alreadySaved && !entry ? `<button class="btn ghost" data-a="fav">☆ Save to My Foods</button>` : ""}
       ${entry ? `<button class="btn danger outline" data-a="delete">Delete entry</button>` : ""}
     </div>`);
@@ -780,7 +866,7 @@ function openSmoothie({ meal, edit, onDone } = {}) {
       <div class="sm-qty"><span>Drinking</span><input class="qty" inputmode="decimal" value="1"><span>× the whole smoothie</span></div>
       ${mealPicker(selMeal)}
       <label class="check"><input type="checkbox" class="sm-save" checked> Save this smoothie in My Foods for next time</label>
-      <button class="btn primary big" data-a="log">Add smoothie to diary</button>
+      <button class="btn primary big" data-a="log">Add smoothie to log</button>
       ${edit ? `<button class="btn ghost" data-a="save-only">Save changes without logging</button>
       <button class="btn danger outline" data-a="delete">Delete smoothie</button>` : ""}
     </div>`);
@@ -909,7 +995,7 @@ function openQuickAdd({ meal, entry, onDone } = {}) {
         <label>Fat g<input data-q="f" inputmode="decimal" value="${entry ? r1(entry.f) : ""}"></label>
       </div>
       ${mealPicker(selMeal)}
-      <button class="btn primary big" data-a="save">${entry ? "Save changes" : "Add to diary"}</button>
+      <button class="btn primary big" data-a="save">${entry ? "Save changes" : "Add to log"}</button>
       ${entry ? `<button class="btn danger outline" data-a="delete">Delete entry</button>` : ""}
     </div>`);
   bindMealPicker(el, (m) => (selMeal = m));
@@ -1171,7 +1257,7 @@ function openPhotoAI({ meal, description = "", autoRun = false, onDone } = {}) {
       ${notes ? `<p class="hint">${esc(notes)}</p>` : ""}
       <div class="ai-total">Total: <b>${totalsText()}</b></div>
       ${mealPicker(selMeal)}
-      <button class="btn primary big" data-a="add-all">Add to diary</button>
+      <button class="btn primary big" data-a="add-all">Add to log</button>
       <p class="hint">Photo estimates are approximate (±20% is typical). For exact numbers, weigh the food and adjust grams.</p>`;
     bindMealPicker(out, (m) => (selMeal = m));
     $$(".ai-item", out).forEach((row) => {
@@ -1228,12 +1314,23 @@ if (window.top !== window.self) {
   document.body.textContent = "Open Calorie Tracker directly.";
   throw new Error("Calorie Tracker will not run inside a frame.");
 }
-render();
+// Wait for the diary to load from IndexedDB before showing anything.
+S.ready.finally(() => {
+  booted = true;
+  render();
+});
+// Ask the browser to keep this app's data even when the phone is low on space.
 navigator.storage?.persist?.().catch(() => {});
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
 // Refresh "Today" if the app stays open past midnight.
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && view === "diary") render();
+  if (document.visibilityState === "visible" && (view === "diary" || view === "history")) render();
+});
+// Redraw charts at the new width when the phone rotates.
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => view === "history" && render(), 150);
 });
