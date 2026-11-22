@@ -182,6 +182,17 @@ const RAW = [
   ["Ice cream, vanilla", 207, 3.5, 23.6, 11.0, [["1/2 cup", 66]]],
   ["Whey protein powder (typical)", 400, 78.0, 8.0, 6.0, [["1 scoop", 30]]],
 
+  // ---------- Smoothie extras ----------
+  // Protein powders vary a lot by brand: the app opens "Adjust calories & macros"
+  // for these so you can type the values from your own tub.
+  ["Plant protein powder (typical)", 380, 70.0, 10.0, 7.0, [["1 scoop", 33]]],
+  ["Casein protein powder (typical)", 370, 75.0, 10.0, 3.0, [["1 scoop", 33]]],
+  ["Peanut butter powder (PB2-style)", 462, 46.0, 38.0, 11.5, [["2 tbsp", 13]]],
+  ["Frozen mixed berries (unsweetened)", 50, 0.7, 12.0, 0.3, [["1 cup", 140]]],
+  ["Coconut water", 19, 0.7, 3.7, 0.2, [["1 cup", 240]]],
+  ["Ice", 0, 0, 0, 0, [["1 cup", 140]]],
+  ["Water", 0, 0, 0, 0, [["1 cup", 237]]],
+
   // ---------- Fats, sauces, condiments ----------
   ["Olive oil", 884, 0, 0, 100, [["1 tbsp", 13.5], ["1 tsp", 4.5]]],
   ["Vegetable / canola oil", 884, 0, 0, 100, [["1 tbsp", 14]]],

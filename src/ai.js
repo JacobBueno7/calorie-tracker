@@ -36,6 +36,14 @@ Identify every distinct food and drink in the input and estimate its edible weig
 - Split mixed dishes into main components when that improves accuracy (e.g. rice, chicken, sauce).
 - If nothing edible is visible, return an empty items array and explain in notes.`;
 
+// The only place the API key is ever sent. Hard-coded so nothing can redirect it.
+const ANTHROPIC_API = "https://api.anthropic.com";
+
+/** Anthropic API keys look like "sk-ant-api03-…". Reject anything else before saving. */
+export function looksLikeAnthropicKey(key) {
+  return /^sk-ant-[A-Za-z0-9_-]{20,}$/.test(key);
+}
+
 export const MODELS = [
   { id: "claude-opus-5-5", label: "Claude Opus 5.5 (most accurate)" },
   { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 (cheaper, faster)" },
@@ -70,7 +78,9 @@ export async function imageToBase64(file, maxSide = 1568) {
  */
 export async function analyzeMeal({ apiKey, model, imageBase64, description }) {
   if (!apiKey) throw new Error("Add your Anthropic API key in Settings first.");
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 2 });
+  // dangerouslyAllowBrowser: this is a single-user app on your own phone, calling
+  // Anthropic directly with your own key (see the security notes in README).
+  const client = new Anthropic({ apiKey, baseURL: ANTHROPIC_API, dangerouslyAllowBrowser: true, maxRetries: 2 });
 
   const content = [];
   if (imageBase64) {

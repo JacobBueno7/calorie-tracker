@@ -2,12 +2,15 @@
 
 const KEYS = { entries: "ct_entries", foods: "ct_myfoods", recent: "ct_recent", settings: "ct_settings" };
 
+// The Anthropic API key lives in its own storage slot, never inside settings,
+// so it can't end up in exports, imports, or anything rendered on screen.
+const API_KEY_SLOT = "ct_apikey";
+
 const DEFAULT_SETTINGS = {
   goal: 2000,
   protein: 150,
   carbs: 200,
   fat: 65,
-  apiKey: "",
   model: "claude-opus-5-5",
   usdaKey: "",
 };
@@ -41,6 +44,34 @@ export const persist = {
   recent: () => save(KEYS.recent, state.recent),
   settings: () => save(KEYS.settings, state.settings),
 };
+
+// ---------- Anthropic API key ----------
+export function getApiKey() {
+  try {
+    return localStorage.getItem(API_KEY_SLOT) || "";
+  } catch {
+    return "";
+  }
+}
+export function setApiKey(key) {
+  localStorage.setItem(API_KEY_SLOT, key);
+}
+export function clearApiKey() {
+  try {
+    localStorage.removeItem(API_KEY_SLOT);
+  } catch {}
+}
+/** "sk-ant-…AbCd": enough to recognise which key is saved without revealing it. */
+export function maskedApiKey() {
+  const k = getApiKey();
+  return k ? `${k.slice(0, 7)}…${k.slice(-4)}` : "";
+}
+// One-time migration: older versions kept the key inside settings.
+if ("apiKey" in state.settings) {
+  if (state.settings.apiKey && !getApiKey()) setApiKey(state.settings.apiKey);
+  delete state.settings.apiKey;
+  persist.settings();
+}
 
 export function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -96,10 +127,19 @@ export function deleteMyFood(id) {
 
 export function exportData() {
   return JSON.stringify(
-    { app: "calorie-tracker", version: 1, exported: new Date().toISOString(), entries: state.entries, foods: state.foods, recent: state.recent, settings: { ...state.settings, apiKey: "" } },
+    { app: "calorie-tracker", version: 1, exported: new Date().toISOString(), entries: state.entries, foods: state.foods, recent: state.recent, settings: { ...state.settings } },
     null,
     2
   );
+}
+
+/** Erase everything this app stores on the device, including the API key. */
+export function eraseAll() {
+  [...Object.values(KEYS), API_KEY_SLOT].forEach((k) => {
+    try {
+      localStorage.removeItem(k);
+    } catch {}
+  });
 }
 
 export function importData(json) {
@@ -108,7 +148,8 @@ export function importData(json) {
   state.entries = data.entries || {};
   state.foods = data.foods || [];
   state.recent = data.recent || [];
-  const keepKey = state.settings.apiKey;
-  state.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}), apiKey: keepKey };
+  // A backup never carries an API key; ignore one if a file has it.
+  const { apiKey: _ignored, ...importedSettings } = data.settings || {};
+  state.settings = { ...DEFAULT_SETTINGS, ...importedSettings };
   Object.values(persist).forEach((fn) => fn());
 }

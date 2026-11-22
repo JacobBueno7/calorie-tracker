@@ -1,5 +1,5 @@
 import { FOOD_DB } from "./foods.js";
-import { analyzeMeal, imageToBase64, MODELS } from "./ai.js";
+import { analyzeMeal, imageToBase64, looksLikeAnthropicKey, MODELS } from "./ai.js";
 import { searchUSDA, searchBranded, searchOFF, lookupBarcode, startBarcodeScan, decodeBarcodeFromFile } from "./online.js";
 import * as S from "./store.js";
 
@@ -158,6 +158,10 @@ function macroBar(label, val, goal, cls) {
     <div class="bar"><div class="${cls}" style="width:${pct}%"></div></div></div>`;
 }
 
+function macroLine(t) {
+  return `<span class="mp">P ${fmt(t.p)}g</span><span class="mc">C ${fmt(t.c)}g</span><span class="mf">F ${fmt(t.f)}g</span>`;
+}
+
 function renderDiary() {
   const list = S.entriesFor(curKey());
   const t = sum(list);
@@ -189,11 +193,13 @@ function renderDiary() {
     const mt = sum(items);
     return `<section class="card meal">
       <div class="meal-head"><span>${m.icon} ${m.label}</span><span class="kcal">${fmt(mt.kcal)} kcal</span></div>
+      ${items.length ? `<div class="meal-macros">${macroLine(mt)}</div>` : ""}
       ${items.length ? `<ul class="entries">${items.map((e) => `
-        <li data-act="edit-entry" data-id="${e.id}">
-          <div class="e-main"><span class="e-name">${esc(e.name)}</span>
-          <span class="e-sub">${e.grams ? `${fmt(e.grams)} g` : "Quick add"}${e.brand ? ` · ${esc(e.brand)}` : ""}${e.source === "ai" ? " · AI" : ""}</span></div>
-          <span class="e-kcal">${fmt(e.kcal)}</span></li>`).join("")}</ul>` : ""}
+        <li data-act="edit-entry" data-id="${esc(e.id)}">
+          <div class="e-main"><span class="e-name">${e.kind === "smoothie" ? "🥤 " : ""}${esc(e.name)}</span>
+          <span class="e-sub">${e.grams ? `${fmt(e.grams)} g` : "Quick add"}${e.brand ? ` · ${esc(e.brand)}` : ""}${e.source === "ai" ? " · AI" : ""}</span>
+          <span class="e-macros">${macroLine(e)}</span></div>
+          <span class="e-kcal">${fmt(e.kcal)}<small>kcal</small></span></li>`).join("")}</ul>` : ""}
       <button class="add-btn" data-act="add" data-meal="${m.id}">＋ Add food</button>
     </section>`;
   }).join("")}
@@ -240,12 +246,13 @@ function renderMyFoods() {
   return `
   <header class="topbar"><h1>My Foods</h1></header>
   <div class="row gap pad">
-    <button class="btn" data-act="new-custom">＋ New food from label</button>
+    <button class="btn" data-act="new-smoothie">🥤 New smoothie</button>
+    <button class="btn ghost" data-act="new-custom">＋ Food from label</button>
     <button class="btn ghost" data-act="scan-to-foods">▦ Scan barcode</button>
   </div>
   <section class="card list">
-    ${state.foods.length ? state.foods.map((f) => `<button class="food-row" data-act="edit-food" data-id="${f.id}">
-      <div><span class="e-name">${esc(f.name)}</span><span class="e-sub">${esc(f.brand || sourceLabel(f))}${f.units?.[0] ? ` · ${esc(f.units[0].label)} = ${fmt(f.units[0].g)} g` : ""}</span></div>
+    ${state.foods.length ? state.foods.map((f) => `<button class="food-row" data-act="edit-food" data-id="${esc(f.id)}">
+      <div><span class="e-name">${f.kind === "smoothie" ? "🥤 " : ""}${esc(f.name)}</span><span class="e-sub">${f.kind === "smoothie" ? `${f.ingredients.length} ingredients · whole = ${fmt(f.kcal * f.units[0].g / 100)} kcal` : `${esc(f.brand || sourceLabel(f))}${f.units?.[0] ? ` · ${esc(f.units[0].label)} = ${fmt(f.units[0].g)} g` : ""}`}</span></div>
       <span class="e-kcal">${fmt(f.kcal)}<small>/100g</small></span></button>`).join("")
       : `<p class="empty">Packaged foods you scan or enter from a nutrition label are saved here so you can add them again in one tap.</p>`}
   </section>`;
@@ -266,10 +273,14 @@ function renderSettings() {
   </section>
   <section class="card form">
     <h3>AI photo scanning</h3>
-    <p class="hint">Photo scans use Claude through your own Anthropic API key. Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. The key is stored only on this phone and sent only to Anthropic. A scan costs roughly a few cents.</p>
-    <label>Anthropic API key
-      <div class="row"><input data-set="apiKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-..." value="${esc(s.apiKey)}">
-      <button class="btn ghost small" data-act="toggle-key" type="button">Show</button></div></label>
+    <p class="hint">Photo scans use Claude through your own Anthropic API key. Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>. The key is stored only on this phone, is never shown again after you save it, is never included in backups, and is sent only to api.anthropic.com. A scan costs roughly a few cents.</p>
+    ${S.getApiKey()
+      ? `<div class="key-saved"><span>🔒 Key saved: <code>${esc(S.maskedApiKey())}</code></span>
+          <div class="row gap"><button class="btn ghost small" data-act="replace-key">Replace</button>
+          <button class="btn danger outline small" data-act="remove-key">Remove</button></div></div>`
+      : `<label>Anthropic API key
+          <div class="row"><input class="key-input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-...">
+          <button class="btn small" data-act="save-key" type="button">Save</button></div></label>`}
     <label>Model<select data-set="model">${MODELS.map((m) => `<option value="${m.id}" ${m.id === s.model ? "selected" : ""}>${m.label}</option>`).join("")}</select></label>
   </section>
   <section class="card form">
@@ -327,20 +338,43 @@ document.addEventListener("click", async (ev) => {
     render();
   }
   else if (act === "new-custom") openCustomFood({ onSaved: () => render() });
+  else if (act === "new-smoothie") openSmoothie({ meal: defaultMeal() });
   else if (act === "edit-food") {
     const food = state.foods.find((f) => f.id === t.dataset.id);
-    if (food) openCustomFood({ edit: food, onSaved: () => render() });
+    if (food?.kind === "smoothie") openSmoothie({ edit: food, meal: defaultMeal() });
+    else if (food) openCustomFood({ edit: food, onSaved: () => render() });
   }
   else if (act === "scan-to-foods") openBarcode({ meal: defaultMeal(), saveOnly: true });
-  else if (act === "toggle-key") {
-    const inp = $("[data-set=apiKey]");
-    inp.type = inp.type === "password" ? "text" : "password";
-    t.textContent = inp.type === "password" ? "Show" : "Hide";
+  else if (act === "save-key") {
+    const inp = $(".key-input");
+    const key = inp.value.replace(/\s+/g, "");
+    if (!looksLikeAnthropicKey(key)) return toast("That doesn't look like an Anthropic key (it should start with sk-ant-)");
+    try {
+      S.setApiKey(key);
+    } catch {
+      return toast("Couldn't save the key on this device");
+    }
+    inp.value = "";
+    toast("Key saved");
+    render();
+  }
+  else if (act === "replace-key") {
+    if (await confirmDialog("Remove the saved key so you can paste a new one?", "Replace key")) {
+      S.clearApiKey();
+      render();
+    }
+  }
+  else if (act === "remove-key") {
+    if (await confirmDialog("Remove your Anthropic API key from this phone? AI scanning will stop working until you add one again.", "Remove key")) {
+      S.clearApiKey();
+      toast("Key removed from this phone");
+      render();
+    }
   }
   else if (act === "export") exportBackup();
   else if (act === "wipe") {
-    if (await confirmDialog("Erase ALL entries, foods and settings on this device? This cannot be undone.", "Erase everything")) {
-      ["ct_entries", "ct_myfoods", "ct_recent", "ct_settings"].forEach((k) => localStorage.removeItem(k));
+    if (await confirmDialog("Erase ALL entries, foods, settings and your API key on this device? This cannot be undone.", "Erase everything")) {
+      S.eraseAll();
       location.reload();
     }
   }
@@ -397,22 +431,31 @@ function searchLocal(q) {
 
 function foodRow(f) {
   return `<button class="food-row" data-food="${esc(f.id)}">
-    <div><span class="e-name">${esc(f.name)}</span><span class="e-sub">${esc(f.brand ? `${f.brand} · ` : "")}${sourceLabel(f)}</span></div>
+    <div><span class="e-name">${f.kind === "smoothie" ? "🥤 " : ""}${esc(f.name)}</span><span class="e-sub">${esc(f.brand ? `${f.brand} · ` : "")}${f.kind === "smoothie" ? "My smoothie" : sourceLabel(f)}</span></div>
     <span class="e-kcal">${fmt(f.kcal)}<small>/100g</small></span></button>`;
 }
 
-function openAddFood(meal) {
+// onPick: when set, the sheet is used to choose an ingredient (smoothie builder)
+// instead of logging to the diary. onPick(food, grams) is called with the result.
+function openAddFood(meal, { onPick } = {}) {
   const foodsById = new Map();
+  const picking = !!onPick;
   const el = openSheet(`
-    <div class="sheet-head"><button class="link" data-close>Cancel</button><h2>Add to ${mealLabel(meal)}</h2><span></span></div>
-    <div class="search"><input type="search" placeholder="Search foods (e.g. strawberries, ground turkey)" autocomplete="off" enterkeyhint="search"></div>
-    <div class="quick-actions">
-      <button data-a="photo"><span>📷</span>Photo AI</button>
+    <div class="sheet-head"><button class="link" data-close>Cancel</button><h2>${picking ? "Add ingredient" : `Add to ${mealLabel(meal)}`}</h2><span></span></div>
+    <div class="search"><input type="search" placeholder="${picking ? "Search (e.g. banana, milk, protein powder)" : "Search foods (e.g. strawberries, ground turkey)"}" autocomplete="off" enterkeyhint="search"></div>
+    <div class="quick-actions ${picking ? "two" : ""}">
+      ${picking ? "" : `<button data-a="photo"><span>📷</span>Photo AI</button>`}
+      ${picking ? "" : `<button data-a="smoothie"><span>🥤</span>Smoothie</button>`}
       <button data-a="barcode"><span>▦</span>Barcode</button>
       <button data-a="custom"><span>🏷️</span>Label</button>
-      <button data-a="quick"><span>⚡</span>Quick add</button>
+      ${picking ? "" : `<button data-a="quick"><span>⚡</span>Quick</button>`}
     </div>
     <div class="results"></div>`);
+  // Where a chosen food goes: into the diary, or back to the smoothie builder.
+  const choose = (food) =>
+    picking
+      ? openAmount(food, { pick: (f, grams) => { closeSheet(el); onPick(f, grams); } })
+      : openAmount(food, { meal, onDone: () => closeSheet(el) });
   const input = $("input", el);
   const results = $(".results", el);
   let onlineToken = 0;
@@ -487,7 +530,7 @@ function openAddFood(meal) {
     const row = ev.target.closest("[data-food]");
     if (row) {
       const food = foodsById.get(row.dataset.food);
-      if (food) openAmount(food, { meal, onDone: () => closeSheet(el) });
+      if (food) choose(food);
       return;
     }
     const a = ev.target.closest("[data-a]")?.dataset.a;
@@ -496,9 +539,9 @@ function openAddFood(meal) {
     if (a === "online") online(q);
     else if (a === "ask-ai") openPhotoAI({ meal, description: q, autoRun: true, onDone: () => closeSheet(el) });
     else if (a === "photo") openPhotoAI({ meal, onDone: () => closeSheet(el) });
-    else if (a === "barcode") openBarcode({ meal, onDone: () => closeSheet(el) });
-    else if (a === "custom")
-      openCustomFood({ prefill: { name: q }, onSaved: (food) => openAmount(food, { meal, onDone: () => closeSheet(el) }) });
+    else if (a === "smoothie") openSmoothie({ meal, onDone: () => closeSheet(el) });
+    else if (a === "barcode") openBarcode({ meal, onFood: choose });
+    else if (a === "custom") openCustomFood({ prefill: { name: q }, onSaved: choose });
     else if (a === "quick") openQuickAdd({ meal, onDone: () => closeSheet(el) });
   });
 
@@ -507,35 +550,117 @@ function openAddFood(meal) {
 }
 
 // ---------- Amount (grams) ----------
-function openAmount(food, { meal, entry, onDone } = {}) {
-  const units = food.units || [];
-  const startGrams = entry?.grams ?? (units[0] && (food.source === "off" || food.source === "custom") ? units[0].g : 100);
-  let grams = startGrams;
+const isProteinPowder = (f) => /protein powder|whey|casein|protein isolate|plant protein|protein shake mix/i.test(f.name || "");
+
+/**
+ * Grams screen. Modes:
+ *  - log a food to the diary (default), or edit an existing diary `entry`
+ *  - `pick(food, grams)`: choose an amount for a smoothie ingredient
+ * Every food has an "Adjust calories & macros" panel; it opens automatically
+ * for protein powder so you can match your tub's label.
+ */
+function openAmount(orig, { meal, entry, onDone, pick, initialGrams } = {}) {
+  let food = { ...orig, units: (orig.units || []).map((u) => ({ ...u })) };
+  const units = food.units;
+  const powder = isProteinPowder(food);
+  const smoothie = food.kind === "smoothie";
+  const preferServing = units[0] && (["off", "custom"].includes(food.source) || powder || smoothie);
+  let grams = initialGrams ?? entry?.grams ?? (preferServing ? units[0].g : 100);
   let selMeal = entry?.meal || meal || defaultMeal();
-  const canSave = food.source === "off" || food.source === "usda" || food.source === "db";
+  const canSave = !pick && ["off", "usda", "db"].includes(food.source);
   const alreadySaved = state.foods.some((f) => f.id === food.id);
+  const base = units[0]; // label basis for the adjust panel (per serving if known, else per 100 g)
+  const perBase = (k) => r1(base ? (food[k] * base.g) / 100 : food[k]);
+  let adjusted = false;
+
+  const perInfo = () =>
+    `${esc(food.brand ? food.brand + " · " : "")}${sourceLabel(food)} · per 100 g: ${fmt(food.kcal)} kcal · P ${r1(food.p)} · C ${r1(food.c)} · F ${r1(food.f)}`;
 
   const el = openSheet(`
-    <div class="sheet-head"><button class="link" data-close>Cancel</button><h2>${entry ? "Edit entry" : "Add food"}</h2><span></span></div>
+    <div class="sheet-head"><button class="link" data-close>Cancel</button><h2>${pick ? "Add ingredient" : entry ? "Edit entry" : "Add food"}</h2><span></span></div>
     <div class="amount">
-      <h3 class="food-title">${esc(food.name)}</h3>
-      <p class="muted">${esc(food.brand ? food.brand + " · " : "")}${sourceLabel(food)} · per 100 g: ${fmt(food.kcal)} kcal · P ${r1(food.p)} · C ${r1(food.c)} · F ${r1(food.f)}</p>
+      <h3 class="food-title">${smoothie ? "🥤 " : ""}${esc(food.name)}</h3>
+      <p class="muted per-info">${perInfo()}</p>
       <div class="grams-box"><input class="grams" inputmode="decimal" value="${r1(grams)}" aria-label="Grams"><span>g</span></div>
       ${units.length ? `<div class="serv">
-        <input class="serv-qty" inputmode="decimal" value="1" aria-label="Servings">
+        <input class="serv-qty" inputmode="decimal" value="${units[0] ? r1(grams / units[0].g) : 1}" aria-label="Servings">
         <span>×</span>
         <select class="serv-unit">${units.map((u, i) => `<option value="${i}">${esc(u.label)} (${r1(u.g)} g)</option>`).join("")}</select>
         <button class="btn ghost small" data-a="apply-serv" type="button">Use</button></div>` : ""}
-      <div class="chips">${[50, 100, 150, 200, 250, 500].map((g) => `<button type="button" data-g="${g}">${g} g</button>`).join("")}</div>
+      <div class="chips">${(pick ? [15, 30, 50, 100, 150, 250] : [50, 100, 150, 200, 250, 500]).map((g) => `<button type="button" data-g="${g}">${g} g</button>`).join("")}</div>
       <div class="live">
         <div class="live-kcal"><b data-k>0</b><span>kcal</span></div>
-        <div class="live-macros"><span>Protein <b data-p>0</b> g</span><span>Carbs <b data-c>0</b> g</span><span>Fat <b data-f>0</b> g</span></div>
+        <div class="live-macros"><span class="mp">Protein <b data-p>0</b> g</span><span class="mc">Carbs <b data-c>0</b> g</span><span class="mf">Fat <b data-f>0</b> g</span></div>
       </div>
-      ${mealPicker(selMeal)}
-      <button class="btn primary big" data-a="save">${entry ? "Save changes" : "Add to diary"}</button>
+      ${smoothie ? `<div class="sm-contents"><h4>What's in it</h4><div class="sm-rows"></div>
+        ${state.foods.some((f) => f.id === food.id && f.kind === "smoothie") ? `<button class="btn ghost small" data-a="edit-recipe" type="button">Edit saved recipe</button>` : ""}</div>` : `<details class="adjust" ${powder ? "open" : ""}>
+        <summary>✏️ Adjust calories & macros${powder ? " — match your tub's label" : ""}</summary>
+        <p class="hint">Type the numbers from your package label ${base ? `for <b>${esc(base.label)}</b>` : "per <b>100 g</b>"}. Everything recalculates for the grams above.</p>
+        ${base ? `<label>${powder ? "Scoop size (g)" : "Serving size (g)"}<input data-adj="g" inputmode="decimal" value="${r1(base.g)}"></label>` : ""}
+        <div class="grid2">
+          <label>Calories<input data-adj="kcal" inputmode="decimal" value="${perBase("kcal")}"></label>
+          <label>Protein g<input data-adj="p" inputmode="decimal" value="${perBase("p")}"></label>
+          <label>Carbs g<input data-adj="c" inputmode="decimal" value="${perBase("c")}"></label>
+          <label>Fat g<input data-adj="f" inputmode="decimal" value="${perBase("f")}"></label>
+        </div>
+        <label class="check"><input type="checkbox" data-adj-save ${powder ? "checked" : ""}> Remember these values in My Foods</label>
+      </details>`}
+      ${pick ? "" : mealPicker(selMeal)}
+      <button class="btn primary big" data-a="save">${pick ? "Add to smoothie" : entry ? "Save changes" : "Add to diary"}</button>
       ${canSave && !alreadySaved && !entry ? `<button class="btn ghost" data-a="fav">☆ Save to My Foods</button>` : ""}
       ${entry ? `<button class="btn danger outline" data-a="delete">Delete entry</button>` : ""}
     </div>`);
+
+  // Adjust panel: label values -> per-100 g values on our copy of the food.
+  $$("[data-adj]", el).forEach((inp) =>
+    inp.addEventListener("input", () => {
+      const g = base ? num($("[data-adj=g]", el).value) : 100;
+      if (!(g > 0)) return;
+      const k = 100 / g;
+      food.kcal = num($("[data-adj=kcal]", el).value) * k;
+      food.p = num($("[data-adj=p]", el).value) * k;
+      food.c = num($("[data-adj=c]", el).value) * k;
+      food.f = num($("[data-adj=f]", el).value) * k;
+      if (base) {
+        base.g = g;
+        const opt = $(".serv-unit option", el);
+        if (opt) opt.textContent = `${base.label} (${r1(g)} g)`;
+      }
+      adjusted = true;
+      $(".per-info", el).innerHTML = perInfo();
+      update();
+    })
+  );
+  // Save the adjusted values as the user's own food so they're reused next time.
+  function rememberAdjusted() {
+    if (!adjusted || !$("[data-adj-save]", el)?.checked) return;
+    const round = (f) => ({ ...f, kcal: r1(f.kcal), p: r1(f.p), c: r1(f.c), f: r1(f.f) });
+    food = food.source === "custom"
+      ? round(food)
+      : round({ ...food, id: "my" + S.uid(), source: "custom", name: food.name.replace(/\s*\(typical\)/i, "") });
+    S.saveMyFood(food);
+    toast(`Saved “${food.name}” to My Foods`);
+  }
+
+  // Smoothie: list every ingredient, scaled to the amount being logged.
+  const renderSmoothieContents = () => {
+    const box = $(".sm-rows", el);
+    if (!box) return;
+    const ings = food.ingredients || [];
+    const whole = ings.reduce((g, i) => g + i.grams, 0);
+    if (!ings.length || !(whole > 0)) {
+      box.innerHTML = `<p class="empty small">Ingredient details weren't saved for this entry.</p>`;
+      return;
+    }
+    const factor = grams / whole;
+    box.innerHTML = ings.map((i) => {
+      const g = i.grams * factor;
+      const v = scale(i, g);
+      return `<div class="sm-row"><div><span class="e-name">${esc(i.name)}</span>
+        <span class="e-sub">${r1(g)} g</span><span class="e-macros">${macroLine(v)}</span></div>
+        <span class="e-kcal">${fmt(v.kcal)}<small>kcal</small></span></div>`;
+    }).join("");
+  };
 
   const gInput = $(".grams", el);
   const update = () => {
@@ -544,14 +669,21 @@ function openAmount(food, { meal, entry, onDone } = {}) {
     $("[data-p]", el).textContent = r1(v.p);
     $("[data-c]", el).textContent = r1(v.c);
     $("[data-f]", el).textContent = r1(v.f);
+    if (smoothie) renderSmoothieContents();
   };
   const setGrams = (g) => {
     grams = Math.max(0, g);
     gInput.value = r1(grams);
     update();
   };
+  // Keep "N × serving" in step when grams are typed or a gram chip is tapped.
+  const syncQty = () => {
+    const unit = units[num($(".serv-unit", el)?.value)];
+    if (unit?.g > 0) $(".serv-qty", el).value = r1(grams / unit.g);
+  };
   gInput.addEventListener("input", () => {
     grams = num(gInput.value);
+    syncQty();
     update();
   });
   gInput.addEventListener("focus", () => gInput.select());
@@ -567,21 +699,34 @@ function openAmount(food, { meal, entry, onDone } = {}) {
 
   el.addEventListener("click", async (ev) => {
     const chip = ev.target.closest("[data-g]");
-    if (chip) return setGrams(num(chip.dataset.g));
+    if (chip) {
+      setGrams(num(chip.dataset.g));
+      return syncQty();
+    }
     const a = ev.target.closest("[data-a]")?.dataset.a;
     if (a === "apply-serv") applyServing();
-    else if (a === "fav") {
+    else if (a === "edit-recipe") {
+      const saved = state.foods.find((f) => f.id === food.id && f.kind === "smoothie");
+      if (saved) openSmoothie({ edit: saved, meal: selMeal });
+    } else if (a === "fav") {
       S.saveMyFood({ ...food });
       ev.target.closest("[data-a]").remove();
       toast("Saved to My Foods");
     } else if (a === "save") {
       if (!(grams > 0)) return toast("Enter how many grams");
+      rememberAdjusted();
+      if (pick) {
+        closeSheet(el);
+        pick({ ...food }, r1(grams));
+        return;
+      }
       const v = scale(food, grams);
       const data = {
         meal: selMeal, name: food.name, brand: food.brand || "", grams: r1(grams),
         kcal: v.kcal, p: v.p, c: v.c, f: v.f,
         per: { kcal: food.kcal, p: food.p, c: food.c, f: food.f },
-        units, source: food.source, foodId: food.id,
+        units: food.units, source: food.source, foodId: food.id, kind: food.kind || "",
+        ingredients: food.kind === "smoothie" ? food.ingredients : undefined,
       };
       if (entry) S.updateEntry(curKey(), entry.id, data);
       else {
@@ -610,9 +755,144 @@ function editEntry(id) {
   if (!entry.per || !entry.grams) return openQuickAdd({ entry });
   const food = {
     id: entry.foodId || "entry" + entry.id, name: entry.name, brand: entry.brand,
-    ...entry.per, units: entry.units || [], source: entry.source,
+    ...entry.per, units: entry.units || [], source: entry.source, kind: entry.kind || "",
+    // Smoothies: ingredients saved with the entry (or, for older entries, from the saved recipe).
+    ingredients: entry.ingredients || state.foods.find((f) => f.id === entry.foodId)?.ingredients,
   };
   openAmount(food, { entry });
+}
+
+// ---------- Smoothie builder ----------
+// A smoothie is saved as a food with kind "smoothie": its per-100 g values come
+// from the sum of its ingredients, and it keeps the ingredient list for editing.
+function openSmoothie({ meal, edit, onDone } = {}) {
+  let ingredients = (edit?.ingredients || []).map((i) => ({ ...i }));
+  let selMeal = meal || defaultMeal();
+  const el = openSheet(`
+    <div class="sheet-head"><button class="link" data-close>Cancel</button><h2>${edit ? "Edit smoothie" : "Smoothie builder"}</h2><span></span></div>
+    <div class="pad smoothie form">
+      <label>Name<input class="sm-name" value="${esc(edit?.name || "")}" placeholder="e.g. Berry protein smoothie"></label>
+      <h4>Ingredients</h4>
+      <div class="sm-list"></div>
+      <button class="btn ghost add-ing" data-a="add-ing">＋ Add ingredient</button>
+      <p class="hint">Liquids are measured in grams ≈ ml (1 cup milk ≈ 244 g). For protein powder you can type your tub's calories and protein per scoop.</p>
+      <div class="live sm-total"></div>
+      <div class="sm-qty"><span>Drinking</span><input class="qty" inputmode="decimal" value="1"><span>× the whole smoothie</span></div>
+      ${mealPicker(selMeal)}
+      <label class="check"><input type="checkbox" class="sm-save" checked> Save this smoothie in My Foods for next time</label>
+      <button class="btn primary big" data-a="log">Add smoothie to diary</button>
+      ${edit ? `<button class="btn ghost" data-a="save-only">Save changes without logging</button>
+      <button class="btn danger outline" data-a="delete">Delete smoothie</button>` : ""}
+    </div>`);
+  const list = $(".sm-list", el);
+  const totalBox = $(".sm-total", el);
+  bindMealPicker(el, (m) => (selMeal = m));
+
+  const toIngredient = (f, grams) => ({
+    foodId: f.id, name: f.name, brand: f.brand || "", source: f.source, units: f.units || [],
+    kcal: f.kcal, p: f.p, c: f.c, f: f.f, grams,
+  });
+  const totals = () => sum(ingredients.map((i) => scale(i, i.grams)));
+  const totalGrams = () => ingredients.reduce((g, i) => g + i.grams, 0);
+
+  function renderList() {
+    list.innerHTML = ingredients.length
+      ? ingredients.map((i, idx) => {
+          const v = scale(i, i.grams);
+          return `<div class="sm-ing" data-idx="${idx}">
+            <button class="sm-ing-main" data-a="edit-ing" data-idx="${idx}">
+              <span class="e-name">${esc(i.name)}</span>
+              <span class="e-sub">${fmt(i.grams)} g · ${fmt(v.kcal)} kcal</span>
+              <span class="e-macros">${macroLine(v)}</span>
+            </button>
+            <button class="sm-del" data-a="del-ing" data-idx="${idx}" aria-label="Remove ${esc(i.name)}">✕</button>
+          </div>`;
+        }).join("")
+      : `<p class="empty small">No ingredients yet. Add fruit, milk, yogurt, protein powder…</p>`;
+    const t = totals();
+    totalBox.innerHTML = `
+      <div class="live-kcal"><b>${fmt(t.kcal)}</b><span>kcal total · ${fmt(totalGrams())} g</span></div>
+      <div class="live-macros"><span class="mp">Protein <b>${r1(t.p)}</b> g</span><span class="mc">Carbs <b>${r1(t.c)}</b> g</span><span class="mf">Fat <b>${r1(t.f)}</b> g</span></div>`;
+  }
+
+  function buildFood() {
+    const g = totalGrams();
+    if (!ingredients.length || !(g > 0)) {
+      toast("Add at least one ingredient");
+      return null;
+    }
+    const t = totals();
+    return {
+      id: edit?.id || "sm" + S.uid(),
+      name: $(".sm-name", el).value.trim() || "Smoothie",
+      brand: "",
+      kind: "smoothie",
+      source: "custom",
+      kcal: r1((t.kcal / g) * 100), p: r1((t.p / g) * 100), c: r1((t.c / g) * 100), f: r1((t.f / g) * 100),
+      units: [{ label: "whole smoothie", g: r1(g) }],
+      ingredients: ingredients.map((i) => ({ ...i })),
+    };
+  }
+
+  el.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("[data-a]");
+    if (!btn) return;
+    const a = btn.dataset.a;
+    const idx = num(btn.dataset.idx);
+    if (a === "add-ing") {
+      openAddFood(selMeal, {
+        onPick: (f, grams) => {
+          ingredients.push(toIngredient(f, grams));
+          renderList();
+        },
+      });
+    } else if (a === "edit-ing") {
+      const i = ingredients[idx];
+      const asFood = { id: i.foodId, name: i.name, brand: i.brand, source: i.source, units: i.units, kcal: i.kcal, p: i.p, c: i.c, f: i.f };
+      openAmount(asFood, {
+        initialGrams: i.grams,
+        pick: (f, grams) => {
+          ingredients[idx] = toIngredient(f, grams);
+          renderList();
+        },
+      });
+    } else if (a === "del-ing") {
+      ingredients.splice(idx, 1);
+      renderList();
+    } else if (a === "log") {
+      const food = buildFood();
+      if (!food) return;
+      const qty = num($(".qty", el).value);
+      if (!(qty > 0)) return toast("Enter how much you're drinking");
+      if ($(".sm-save", el).checked) S.saveMyFood(food);
+      const grams = food.units[0].g * qty;
+      const v = scale(food, grams);
+      S.addEntry(curKey(), {
+        meal: selMeal, name: food.name, brand: "", grams: r1(grams),
+        kcal: v.kcal, p: v.p, c: v.c, f: v.f,
+        per: { kcal: food.kcal, p: food.p, c: food.c, f: food.f },
+        units: food.units, source: "custom", foodId: food.id, kind: "smoothie", ingredients: food.ingredients,
+      });
+      S.rememberRecent(food);
+      toast(`Added ${fmt(v.kcal)} kcal smoothie to ${mealLabel(selMeal)}`);
+      closeSheet(el);
+      onDone?.();
+      render();
+    } else if (a === "save-only") {
+      const food = buildFood();
+      if (!food) return;
+      S.saveMyFood(food);
+      toast("Smoothie saved");
+      closeSheet(el);
+      render();
+    } else if (a === "delete" && (await confirmDialog(`Delete “${edit.name}” from My Foods?`))) {
+      S.deleteMyFood(edit.id);
+      closeSheet(el);
+      render();
+    }
+  });
+
+  renderList();
 }
 
 // ---------- Quick add ----------
@@ -728,8 +1008,9 @@ function openCustomFood({ prefill = {}, edit, onSaved } = {}) {
 }
 
 // ---------- Barcode ----------
-function openBarcode({ meal, onDone, saveOnly } = {}) {
+function openBarcode({ meal, onDone, onFood, saveOnly } = {}) {
   let stop = null;
+  const next = onFood || ((f) => openAmount(f, { meal, onDone }));
   const el = openSheet(
     `<div class="sheet-head"><button class="link" data-close>Cancel</button><h2>Scan barcode</h2><span></span></div>
     <div class="pad">
@@ -762,12 +1043,12 @@ function openBarcode({ meal, onDone, saveOnly } = {}) {
         S.saveMyFood(food);
         toast(`Saved “${food.name}” to My Foods`);
         render();
-      } else openAmount(food, { meal, onDone });
+      } else next(food);
     } else {
       toast("Not in the database — enter it from the label");
       openCustomFood({
         prefill: { barcode: code },
-        onSaved: (f) => (saveOnly ? render() : openAmount(f, { meal, onDone })),
+        onSaved: (f) => (saveOnly ? render() : next(f)),
       });
     }
   }
@@ -808,7 +1089,7 @@ function openPhotoAI({ meal, description = "", autoRun = false, onDone } = {}) {
   const el = openSheet(`
     <div class="sheet-head"><button class="link" data-close>Cancel</button><h2>AI Meal Scan</h2><span></span></div>
     <div class="pad">
-      ${state.settings.apiKey ? "" : `<div class="notice">Add your Anthropic API key in <b>Settings</b> to use AI scanning. <button class="btn small" data-a="go-settings">Open Settings</button></div>`}
+      ${S.getApiKey() ? "" : `<div class="notice">Add your Anthropic API key in <b>Settings</b> to use AI scanning. <button class="btn small" data-a="go-settings">Open Settings</button></div>`}
       <div class="photo-box">
         <img class="preview" alt="" hidden>
         <div class="photo-btns">
@@ -843,12 +1124,12 @@ function openPhotoAI({ meal, description = "", autoRun = false, onDone } = {}) {
   async function analyze() {
     const desc = $("textarea", el).value.trim();
     if (!imageB64 && !desc) return toast("Take a photo or describe the meal");
-    if (!state.settings.apiKey) return toast("Add your API key in Settings first");
+    if (!S.getApiKey()) return toast("Add your API key in Settings first");
     const btn = $("[data-a=analyze]", el);
     btn.disabled = true;
     out.innerHTML = `<div class="loading"><span class="spinner"></span>Analyzing your meal… this takes 10–40 seconds.</div>`;
     try {
-      const res = await analyzeMeal({ apiKey: state.settings.apiKey, model: state.settings.model, imageBase64: imageB64, description: desc });
+      const res = await analyzeMeal({ apiKey: S.getApiKey(), model: state.settings.model, imageBase64: imageB64, description: desc });
       items = res.items.map((it) => ({
         ...it,
         on: true,
@@ -883,7 +1164,7 @@ function openPhotoAI({ meal, description = "", autoRun = false, onDone } = {}) {
         <div class="ai-item" data-i="${i}">
           <input type="checkbox" ${it.on ? "checked" : ""} aria-label="Include">
           <div class="ai-mid"><input class="ai-name" value="${esc(it.name)}">
-            <span class="conf ${it.confidence}">${it.confidence} confidence</span></div>
+            <span class="conf ${esc(it.confidence)}">${esc(it.confidence)} confidence</span></div>
           <div class="ai-g"><input class="ai-grams" inputmode="decimal" value="${r1(it.grams)}"><span>g</span></div>
           <b class="ai-kcal">${fmt(scale(it.per, it.grams).kcal)}</b>
         </div>`).join("")}</div>
@@ -942,6 +1223,11 @@ function openPhotoAI({ meal, description = "", autoRun = false, onDone } = {}) {
 }
 
 // ---------- boot ----------
+// Refuse to run inside another site's frame (clickjacking protection).
+if (window.top !== window.self) {
+  document.body.textContent = "Open Calorie Tracker directly.";
+  throw new Error("Calorie Tracker will not run inside a frame.");
+}
 render();
 navigator.storage?.persist?.().catch(() => {});
 if ("serviceWorker" in navigator && location.protocol === "https:") {
