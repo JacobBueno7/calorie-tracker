@@ -4,8 +4,9 @@ A personal calorie tracker for iPhone, built as an installable web app (PWA). No
 
 ## Features
 - **Exact grams → calories.** Type any amount (100 g strawberries, 500 g ground turkey, 500 g cooked rice) and calories + protein/carbs/fat are calculated from per-100 g values.
-- **Breakfast, lunch, dinner, snacks**, daily goal ring, macro bars, 14-day history.
-- **Food sources:** ~200 built-in USDA foods (instant, offline), USDA FoodData Central online search (generic + branded/packaged), Open Food Facts.
+- **Breakfast, lunch, dinner, snacks**, daily goal ring, macro bars.
+- **13,600+ foods searchable offline:** ~200 hand-picked staples plus 13,427 foods from USDA FoodData Central: raw ingredients, cooked dishes as people eat them (pad thai, pho, burritos, sushi rolls…), and restaurant/fast-food items (McDonald's, Burger King, Taco Bell, Subway, KFC, Wendy's, Pizza Hut…), most with household serving sizes. Search handles plurals and everyday words (coke → cola, ketchup → catsup) and shows close matches.
+- **Brand-name packaged foods** (millions of products) via online search: USDA Branded Foods + Open Food Facts, and barcode scanning.
 - **Packaged food:** scan the barcode with the camera, or enter the Nutrition Facts label (per serving or per 100 g). Saved to *My Foods*.
 - **AI meal photo scan:** take a picture and Claude identifies each food, estimates grams and calories for the whole meal. Edit the grams before adding.
 - **History & trends** (7 days / 30 / 90 / 1 year / all time): average calories per day vs goal and vs the previous period, days logged, days at or under goal, logging streaks, average protein and how often you hit it, highest/lowest day, a daily (or weekly/monthly) calories chart with a 7-day average, macro split, calories by meal and by weekday, top calorie sources, and a day-by-day table.
@@ -48,3 +49,10 @@ npm install
 node build.mjs      # outputs dist/
 ```
 Pushing to `main` deploys to GitHub Pages via `.github/workflows/deploy.yml`.
+
+## Food database
+`data/foods-usda.json` is generated from the [USDA FoodData Central](https://fdc.nal.usda.gov/download-datasets) bulk downloads (public domain): Foundation Foods, FNDDS (Survey foods), and SR Legacy. To refresh it, download and unzip the three JSON datasets, then:
+```
+node scripts/build-food-db.mjs <foundation.json> <survey.json> <sr_legacy.json>
+```
+The build copies it to `dist/foods-<hash>.json`. The app loads it on first use, and the service worker caches it so search works offline. It's only downloaded again when the data changes.

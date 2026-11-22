@@ -2,11 +2,18 @@
 import { build } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
 const OUT = "dist";
 if (existsSync(OUT)) for (const f of readdirSync(OUT)) rmSync(`${OUT}/${f}`, { recursive: true, force: true });
 mkdirSync(`${OUT}/icons`, { recursive: true });
 cpSync("public", OUT, { recursive: true });
+
+// The ~13,400-food USDA list ships as its own file, named by content hash so phones can
+// cache it for good and only download it again when the data changes.
+const foodsJson = readFileSync("data/foods-usda.json");
+const foodsFile = `foods-${createHash("sha256").update(foodsJson).digest("hex").slice(0, 12)}.json`;
+writeFileSync(`${OUT}/${foodsFile}`, foodsJson);
 
 await build({
   entryPoints: ["src/main.js"],
@@ -16,10 +23,11 @@ await build({
   target: ["safari15"],
   outfile: `${OUT}/app.js`,
   legalComments: "none",
+  define: { __FOODS_DB_URL__: JSON.stringify(foodsFile) },
 });
 
 const stamp = Date.now().toString(36);
-const sw = readFileSync(`${OUT}/sw.js`, "utf8").replace("__BUILD__", stamp);
+const sw = readFileSync(`${OUT}/sw.js`, "utf8").replace("__BUILD__", stamp).replace("__FOODS_DB__", foodsFile);
 writeFileSync(`${OUT}/sw.js`, sw);
 writeFileSync(`${OUT}/.nojekyll`, "");
 

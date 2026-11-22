@@ -1,6 +1,6 @@
-import { FOOD_DB } from "./foods.js";
 import { analyzeMeal, imageToBase64, looksLikeAnthropicKey, MODELS } from "./ai.js";
-import { searchUSDA, searchBranded, searchOFF, lookupBarcode, startBarcodeScan, decodeBarcodeFromFile } from "./online.js";
+import { searchBranded, searchOFF, lookupBarcode, startBarcodeScan, decodeBarcodeFromFile } from "./online.js";
+import { loadFoodDB, foodDBLoaded, foodDBSize, searchFoods } from "./fooddb.js";
 import * as S from "./store.js";
 import { MEALS, mealLabel, $, $$, esc, fmt, r1, num, scale, sum, parseKey, startOfDay, addDays, formatBytes } from "./util.js";
 import { renderTrends, bindTrends, kgToUnit, unitToKg } from "./trends.js";
@@ -511,30 +511,12 @@ async function exportBackup() {
 }
 
 // ---------- Add food (search) ----------
-function searchLocal(q) {
-  const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const pool = [...state.foods, ...FOOD_DB];
-  const seen = new Set();
-  return pool
-    .map((f) => {
-      const hay = `${f.name} ${f.brand || ""}`.toLowerCase();
-      if (!tokens.every((tk) => hay.includes(tk.replace(/s$/, "")))) return null;
-      let score = 0;
-      if (hay.startsWith(tokens[0])) score += 3;
-      if (f.source === "custom" || f.source === "off") score += 2;
-      score -= hay.length / 100;
-      return { f, score };
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.score - a.score)
-    .map((x) => x.f)
-    .filter((f) => (seen.has(f.id) ? false : seen.add(f.id)))
-    .slice(0, 40);
-}
+// My Foods + built-ins + ~13,400 USDA foods, all searched on the phone (works offline).
+const searchLocal = (q) => searchFoods(q, state.foods);
 
 function foodRow(f) {
   return `<button class="food-row" data-food="${esc(f.id)}">
-    <div><span class="e-name">${f.kind === "smoothie" ? "🥤 " : ""}${esc(f.name)}</span><span class="e-sub">${esc(f.brand ? `${f.brand} · ` : "")}${f.kind === "smoothie" ? "My smoothie" : sourceLabel(f)}</span></div>
+    <div><span class="e-name">${f.kind === "smoothie" ? "🥤 " : ""}${esc(f.name)}</span><span class="e-sub">${esc(f.brand ? `${f.brand} · ` : "")}${f.kind === "smoothie" ? "My smoothie" : sourceLabel(f)}${f.kind !== "smoothie" && f.units?.[0] ? ` · ${esc(f.units[0].label)} = ${fmt(f.units[0].g)} g` : ""}</span></div>
     <span class="e-kcal">${fmt(f.kcal)}<small>/100g</small></span></button>`;
 }
 
@@ -574,36 +556,47 @@ function openAddFood(meal, { onPick } = {}) {
         (state.recent.length ? `<h4>Recent</h4>${state.recent.slice(0, 15).map(foodRow).join("")}` : "") +
         (state.foods.length ? `<h4>My Foods</h4>${state.foods.map(foodRow).join("")}` : "") +
         (!state.recent.length && !state.foods.length
-          ? `<p class="empty">Type a food to search. Enter exact grams on the next screen and calories are calculated for you.<br><br>For packaged food, scan the barcode or enter the nutrition label.</p>`
+          ? `<p class="empty">Search ${(Math.floor(foodDBSize() / 1000) * 1000).toLocaleString()}+ foods, from strawberries to a Big Mac. Enter exact grams on the next screen and calories are calculated for you.<br><br>For packaged food, scan the barcode or enter the nutrition label.</p>`
           : "");
       return;
     }
-    const local = searchLocal(q);
-    register(local);
+    const { foods: found, partialFrom } = searchLocal(q);
+    register(found);
+    const exact = found.slice(0, partialFrom);
+    const close = found.slice(partialFrom);
+    const loadingNote = foodDBLoaded() ? "" : dbFailed
+      ? `<p class="hint center">The full food list couldn't load (offline?). Showing built-in foods only.</p>`
+      : `<div class="loading"><span class="spinner"></span>Loading ${(13000).toLocaleString()}+ foods…</div>`;
     results.innerHTML = `
-      ${local.length ? local.map(foodRow).join("") : `<p class="empty small">No built-in match for “${esc(q)}”.</p>`}
+      ${loadingNote}
+      ${exact.map(foodRow).join("")}
+      ${!exact.length && foodDBLoaded() ? `<p class="empty small">No exact match for “${esc(q)}”. Try fewer or different words, search packaged foods, or ask AI.</p>` : ""}
+      ${close.length ? `<h4>Close matches</h4>${close.map(foodRow).join("")}` : ""}
       <div class="more">
-        <button class="btn ghost" data-a="online">🔎 Search online for “${esc(q)}”</button>
+        <button class="btn ghost" data-a="online">🔎 Search packaged & branded foods</button>
         <button class="btn ghost" data-a="ask-ai">✨ Ask AI about “${esc(q)}”</button>
       </div>
       <div class="online"></div>`;
   }
+  // The big USDA list loads on first use (then it's cached for offline use).
+  let dbFailed = false;
+  if (!foodDBLoaded())
+    loadFoodDB()
+      .catch(() => (dbFailed = true))
+      .finally(() => el.isConnected && input.value.trim() && show(input.value.trim()));
 
   async function online(q) {
     const my = ++onlineToken;
     const box = $(".online", results);
     const more = $(".more", results);
     if (more) more.querySelector("[data-a=online]").remove();
-    box.innerHTML = `<div class="loading"><span class="spinner"></span>Searching USDA & packaged foods…</div>`;
+    box.innerHTML = `<div class="loading"><span class="spinner"></span>Searching packaged & branded foods…</div>`;
     const key = state.settings.usdaKey;
-    const [usda, branded, off] = await Promise.allSettled([searchUSDA(q, key), searchBranded(q, key), searchOFF(q)]);
+    // Generic USDA foods are already built in; online search covers brand-name products.
+    const [branded, off] = await Promise.allSettled([searchBranded(q, key), searchOFF(q)]);
     if (my !== onlineToken) return;
     let html = "";
-    const limited = [usda, branded].some((r) => r.status === "rejected" && String(r.reason).includes("429"));
-    if (usda.status === "fulfilled" && usda.value.length) {
-      register(usda.value);
-      html += `<h4>USDA (generic foods)</h4>${usda.value.map(foodRow).join("")}`;
-    }
+    const limited = branded.status === "rejected" && String(branded.reason).includes("429");
     const packaged = [
       ...(branded.status === "fulfilled" ? branded.value : []),
       ...(off.status === "fulfilled" ? off.value : []),
@@ -613,7 +606,7 @@ function openAddFood(meal, { onPick } = {}) {
       html += `<h4>Packaged & branded</h4>${packaged.map(foodRow).join("")}`;
     }
     if (limited) html = `<p class="notice">USDA search is rate-limited on the shared demo key. Add your own free USDA key in Settings.</p>` + html;
-    else if (usda.status === "rejected" && branded.status === "rejected") html += `<p class="empty small">Online search failed. Check your connection.</p>`;
+    else if (branded.status === "rejected" && off.status === "rejected") html += `<p class="empty small">Online search failed. Check your connection.</p>`;
     box.innerHTML = html || `<p class="empty small">No online results. Try different words, “Ask AI”, or enter it from the label.</p>`;
   }
 
@@ -1346,6 +1339,8 @@ S.ready.finally(() => {
   S.ensureFirstUse();
   booted = true;
   render();
+  // Fetch the big food list in the background so search is instant and works offline later.
+  setTimeout(() => loadFoodDB().catch(() => {}), 2500);
 });
 // Ask the browser to keep this app's data even when the phone is low on space.
 navigator.storage?.persist?.().catch(() => {});

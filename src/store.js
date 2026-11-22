@@ -257,14 +257,18 @@ export function setWeight(key, kg) {
   persist.weights();
 }
 
+// Drop search-index fields (_s, _w) that foods from the big list carry.
+const slimFood = (food) => Object.fromEntries(Object.entries(food).filter(([k]) => !k.startsWith("_")));
+
 export function rememberRecent(food) {
   if (!food || food.source === "quick") return;
-  const slim = { ...food };
+  const slim = slimFood(food);
   state.recent = [slim, ...state.recent.filter((f) => f.id !== food.id && f.name !== food.name)].slice(0, 30);
   persist.recent();
 }
 
 export function saveMyFood(food) {
+  food = slimFood(food);
   const existing = state.foods.findIndex((f) => f.id === food.id);
   if (existing >= 0) state.foods[existing] = food;
   else state.foods.unshift(food);
