@@ -50,9 +50,15 @@
   }
 }
 
-* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* App-like touch behavior: no double-tap zoom, no text selection or long-press menus on UI,
+   no page bounce (pull-to-refresh is handled by the app). */
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 [hidden] { display: none !important; }
 html, body { margin: 0; background: var(--bg); color: var(--text); }
+html { overscroll-behavior: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea, select { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+img, svg { -webkit-user-drag: none; }
 body {
   font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   padding: var(--safe-t) 0 calc(104px + var(--safe-b));
@@ -92,10 +98,17 @@ a { color: var(--accent); }
 .foot { text-align: center; color: var(--muted); font-size: 12px; padding: 8px 0 16px; }
 .hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; line-height: 1.45; }
 
-/* ============ week strip ============ */
-.week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 0 0 12px; }
-.wd { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0 9px; border-radius: 16px; }
+/* ============ day strip (scrolls sideways; 7 days visible) ============ */
+.week {
+  position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - 24px) / 7); gap: 4px;
+  overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scroll-padding: 0 16px;
+  margin: -4px -16px 8px; padding: 4px 16px 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+.week::-webkit-scrollbar { display: none; }
+.wd { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0 9px; border-radius: 16px; scroll-snap-align: start; }
 .wd-l { font-size: 11px; font-weight: 650; color: var(--muted); }
+.wd-l.m { color: var(--accent); text-transform: uppercase; letter-spacing: 0.3px; font-size: 10.5px; }
 .wd-n { font-size: 16px; font-weight: 700; }
 .wd.today .wd-n { color: var(--accent); }
 .wd.on { background: var(--card); box-shadow: var(--shadow); }
@@ -326,7 +339,7 @@ input[type="checkbox"] { width: 22px; height: 22px; margin: 0; accent-color: var
 .ai-item { display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: 14px; padding: 8px 10px; box-shadow: var(--shadow); }
 .ai-item.off { opacity: 0.45; }
 .ai-mid { flex: 1; min-width: 0; }
-.ai-mid input { margin: 0; padding: 4px 6px; background: transparent; font-weight: 650; font-size: 15px; }
+.ai-mid input { margin: 0; padding: 4px 6px; background: transparent; font-weight: 650; font-size: 16px; }
 .conf { font-size: 11px; padding: 0 6px; color: var(--muted); }
 .conf.low { color: var(--danger); }
 .conf.high { color: var(--accent); }
@@ -499,6 +512,23 @@ button.tile { position: relative; }
   box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============ press feedback (like native buttons) ============ */
+.food-row, .tile, .action, .wd, .hist-row, .sum-stat, .icon-btn, .chips button, .quick-actions button, .scan-cta, .add-btn, #tabs button, .seg button, .date-title {
+  transition: transform 0.12s ease, opacity 0.12s ease, background 0.2s, color 0.2s;
+}
+.food-row:active, .tile:active, .action:active, .wd:active, .sum-stat:active, .icon-btn:active,
+.chips button:active, .quick-actions button:active, .scan-cta:active, .add-btn:active, #tabs button:active { transform: scale(0.96); }
+.hist-row:active, .date-title:active, .seg button:active { opacity: 0.6; }
+
+/* ============ pull to refresh ============ */
+#ptr { position: fixed; z-index: 15; top: calc(var(--safe-t) + 10px); left: 50%; transform: translate(-50%, -56px); opacity: 0; pointer-events: none; }
+.ptr-ball {
+  width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--card); color: var(--muted); box-shadow: 0 6px 20px -6px rgba(0, 0, 0, 0.35), var(--shadow);
+}
+#ptr.ready .ptr-ball { color: var(--accent); }
+#ptr.spin .ptr-ball .ico { animation: spin 0.7s linear infinite; }
 
 @media (max-width: 370px) {
   .sum-top { flex-direction: column; }

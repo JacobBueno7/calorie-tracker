@@ -211,6 +211,14 @@ export function dayKey(d) {
   return `${y}-${m}-${day}`;
 }
 
+/** First day the app was used (YYYY-MM-DD). Set once; for existing users it's the earliest logged day. */
+export function ensureFirstUse() {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(state.settings.firstUse || "")) return;
+  const keys = [...Object.keys(state.entries), ...Object.keys(state.weights), dayKey(new Date())].sort();
+  state.settings.firstUse = keys[0];
+  persist.settings();
+}
+
 export function entriesFor(key) {
   return state.entries[key] || [];
 }

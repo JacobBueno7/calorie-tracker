@@ -10,6 +10,7 @@ A personal calorie tracker for iPhone, built as an installable web app (PWA). No
 - **AI meal photo scan:** take a picture and Claude identifies each food, estimates grams and calories for the whole meal. Edit the grams before adding.
 - **History & trends** (7 days / 30 / 90 / 1 year / all time): average calories per day vs goal and vs the previous period, days logged, days at or under goal, logging streaks, average protein and how often you hit it, highest/lowest day, a daily (or weekly/monthly) calories chart with a 7-day average, macro split, calories by meal and by weekday, top calorie sources, and a day-by-day table.
 - **Body weight:** log weigh-ins (lb or kg), see a 7-day trend line, change and rate per week, and an **estimated maintenance calories** figure computed from your logged intake and weight trend (after ~2 weeks of data).
+- **Feels like a native app:** no double-tap or pinch zoom, no text-selection/long-press menus, pull down to refresh (reloads the latest version and keeps your place), and a scrollable day strip that starts on the first day you used the app and gains a new day at midnight.
 - Smoothie builder, quick add, edit/delete entries, export/import backups, light & dark mode, works offline.
 
 ## Where your data lives

@@ -97,6 +97,7 @@ const ICONS = {
   camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   scale: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8.5 9.5a5 5 0 0 1 7 0L12 13z"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
 };
 const icon = (name, cls = "") => `<svg class="ico ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -106,8 +107,10 @@ function render() {
   if (!booted) return;
   $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   const v = $("#view");
-  if (view === "diary") v.innerHTML = renderDiary();
-  else if (view === "history") {
+  if (view === "diary") {
+    v.innerHTML = renderDiary();
+    centerDayStrip(v);
+  } else if (view === "history") {
     v.innerHTML = renderTrends();
     bindTrends(v, (range) => {
       state.settings.histRange = range;
@@ -154,23 +157,37 @@ function macroLine(t) {
   return `<span class="mp">P ${fmt(t.p)}g</span><span class="mc">C ${fmt(t.c)}g</span><span class="mf">F ${fmt(t.f)}g</span>`;
 }
 
-// Mon–Sun strip around the selected day; each day shows how close it got to the goal.
-function weekStrip() {
+// Scrollable day strip: every day from the first day you used the app up to today
+// (a new day appears at local midnight). Each day shows how close it got to the goal.
+function stripStartKey() {
+  let first = state.settings.firstUse || curKey();
+  // Also reach back to any older logged day (e.g. from an imported backup) or the day being viewed.
+  for (const k of [...Object.keys(state.entries), ...Object.keys(state.weights), curKey()]) if (k < first) first = k;
+  return first;
+}
+function dayStrip() {
   const goal = state.settings.goal;
-  const cur = startOfDay(current);
-  const monday = addDays(cur, -((cur.getDay() + 6) % 7));
-  const todayK = S.dayKey(new Date());
-  return `<div class="week">${[0, 1, 2, 3, 4, 5, 6].map((i) => {
-    const d = addDays(monday, i);
+  const today = startOfDay(new Date());
+  const todayK = S.dayKey(today);
+  const items = [];
+  for (let d = parseKey(stripStartKey()), i = 0; d <= today; d = addDays(d, 1), i++) {
     const k = S.dayKey(d);
     const kcal = sum(S.entriesFor(k)).kcal;
     const pct = goal > 0 ? Math.min(kcal / goal, 1) : 0;
-    return `<button class="wd${k === curKey() ? " on" : ""}${k === todayK ? " today" : ""}" data-act="goto-day" data-key="${k}" ${k > todayK ? "disabled" : ""}
+    // The first day shown and each 1st of the month show the month instead of the weekday letter.
+    const monthTag = i === 0 || d.getDate() === 1;
+    items.push(`<button class="wd${k === curKey() ? " on" : ""}${k === todayK ? " today" : ""}" data-act="goto-day" data-key="${k}"
       aria-label="${esc(d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }))}: ${fmt(kcal)} kcal">
-      <span class="wd-l">${esc(d.toLocaleDateString(undefined, { weekday: "narrow" }))}</span>
+      <span class="wd-l${monthTag ? " m" : ""}">${esc(d.toLocaleDateString(undefined, monthTag ? { month: "short" } : { weekday: "narrow" }))}</span>
       <span class="wd-n">${d.getDate()}</span>
-      <span class="wd-ring${kcal > goal ? " over" : ""}" style="--pct:${pct.toFixed(3)}"></span></button>`;
-  }).join("")}</div>`;
+      <span class="wd-ring${kcal > goal ? " over" : ""}" style="--pct:${pct.toFixed(3)}"></span></button>`);
+  }
+  return `<div class="week" data-strip>${items.join("")}</div>`;
+}
+function centerDayStrip(root) {
+  const strip = $("[data-strip]", root);
+  const on = strip && $(".wd.on", strip);
+  if (on) strip.scrollLeft = on.offsetLeft - (strip.clientWidth - on.offsetWidth) / 2;
 }
 
 function renderDiary() {
@@ -191,7 +208,7 @@ function renderDiary() {
       <button class="icon-btn" data-act="next-day" aria-label="Next day" ${isToday ? "disabled" : ""}>${icon("chevR")}</button>
     </div>
   </header>
-  ${weekStrip()}
+  ${dayStrip()}
   <section class="card summary">
     <div class="sum-top">
       <div class="ring-wrap">${ring(t.kcal, goal)}
@@ -1314,8 +1331,19 @@ if (window.top !== window.self) {
   document.body.textContent = "Open Calorie Tracker directly.";
   throw new Error("Calorie Tracker will not run inside a frame.");
 }
+// After a pull-to-refresh, come back to the same tab and day.
+try {
+  const resume = JSON.parse(sessionStorage.getItem("ct_resume") || "null");
+  sessionStorage.removeItem("ct_resume");
+  if (resume) {
+    if (["diary", "history", "foods", "settings"].includes(resume.view)) view = resume.view;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(resume.day || "") && resume.day <= S.dayKey(new Date())) current = parseKey(resume.day);
+  }
+} catch {}
+
 // Wait for the diary to load from IndexedDB before showing anything.
 S.ready.finally(() => {
+  S.ensureFirstUse();
   booted = true;
   render();
 });
@@ -1324,10 +1352,116 @@ navigator.storage?.persist?.().catch(() => {});
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
-// Refresh "Today" if the app stays open past midnight.
+// ---------- new day at local midnight ----------
+// The day strip gains a day at 12:00 am. If you were looking at "today", the app moves
+// on to the new today (unless a panel is open, so an entry in progress isn't moved).
+let knownToday = S.dayKey(new Date());
+function checkNewDay() {
+  const k = S.dayKey(new Date());
+  if (k === knownToday) return false;
+  const wasOnToday = curKey() === knownToday;
+  knownToday = k;
+  if (wasOnToday && !stack.length) current = new Date();
+  render();
+  return true;
+}
+function scheduleMidnight() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+  setTimeout(() => {
+    checkNewDay();
+    scheduleMidnight();
+  }, next - now);
+}
+scheduleMidnight();
+// iOS pauses timers while the app is in the background, so also check when it comes back.
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && (view === "diary" || view === "history")) render();
+  if (document.visibilityState === "visible" && !checkNewDay() && (view === "diary" || view === "history")) render();
 });
+
+// ---------- feel like an app, not a web page ----------
+// Block pinch-zoom (iOS gesture events); double-tap zoom is disabled in CSS (touch-action).
+["gesturestart", "gesturechange", "gestureend"].forEach((t) => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
+
+// ---------- pull to refresh ----------
+// Pull down at the top of a screen to reload the latest version of the app.
+(function pullToRefresh() {
+  const THRESHOLD = 70;
+  const MAX = 110;
+  const ind = document.createElement("div");
+  ind.id = "ptr";
+  ind.setAttribute("aria-hidden", "true");
+  ind.innerHTML = `<div class="ptr-ball">${icon("refresh")}</div>`;
+  document.body.appendChild(ind);
+  const ball = ind.firstChild;
+  let startY = null;
+  let startX = 0;
+  let pull = 0;
+  let pulling = false;
+  let refreshing = false;
+  const show = (d, animate) => {
+    const t = animate ? "transform 0.25s ease, opacity 0.25s ease" : "none";
+    ind.style.transition = t;
+    ind.style.transform = `translate(-50%, ${d - 56}px)`;
+    ind.style.opacity = String(Math.min(1, d / 36));
+    ball.style.transform = `rotate(${d * 3.2}deg)`;
+    ind.classList.toggle("ready", d >= THRESHOLD);
+    const v = $("#view");
+    v.style.transition = t;
+    v.style.transform = d > 0 ? `translateY(${d * 0.35}px)` : "";
+  };
+  document.addEventListener(
+    "touchstart",
+    (e) => {
+      startY = null;
+      if (refreshing || stack.length || e.touches.length !== 1 || window.scrollY > 0) return;
+      startY = e.touches[0].clientY;
+      startX = e.touches[0].clientX;
+      pulling = false;
+      pull = 0;
+    },
+    { passive: true }
+  );
+  document.addEventListener(
+    "touchmove",
+    (e) => {
+      if (startY == null) return;
+      const dy = e.touches[0].clientY - startY;
+      const dx = e.touches[0].clientX - startX;
+      if (!pulling) {
+        // Sideways swipes (day strip) and upward scrolls aren't pulls.
+        if (Math.abs(dx) > Math.abs(dy) || dy < 0) {
+          if (Math.abs(dx) > 10 || dy < -10) startY = null;
+          return;
+        }
+        if (dy < 10) return;
+        if (window.scrollY > 0) return void (startY = null);
+        pulling = true;
+      }
+      e.preventDefault();
+      pull = Math.min(MAX, (dy - 10) * 0.5);
+      show(pull);
+    },
+    { passive: false }
+  );
+  const end = () => {
+    if (startY == null) return;
+    startY = null;
+    if (!pulling) return;
+    pulling = false;
+    if (pull >= THRESHOLD) {
+      refreshing = true;
+      ind.classList.add("spin");
+      show(THRESHOLD * 0.8, true);
+      try {
+        sessionStorage.setItem("ct_resume", JSON.stringify({ view, day: curKey() }));
+      } catch {}
+      setTimeout(() => location.reload(), 450);
+    } else show(0, true);
+  };
+  document.addEventListener("touchend", end);
+  document.addEventListener("touchcancel", end);
+})();
 // Redraw charts at the new width when the phone rotates.
 let resizeTimer;
 window.addEventListener("resize", () => {

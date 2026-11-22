@@ -1,4 +1,4 @@
-// Offline support: cache the app shell. Data lives in localStorage, API calls go to the network.
+// Offline support: cache the app shell. Data lives on the device (IndexedDB/localStorage), API calls go to the network.
 const CACHE = "ct-__BUILD__";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png"];
 
